@@ -2,6 +2,45 @@
 
 A local assessment builder that turns source material into five reviewer-approved questions: two multiple choice, two true/false, and one code analysis.
 
+## How the app works
+
+Think of Question Studio as a **workbench**: the browser is where you provide material and review the work; the backend is the workshop that sends a carefully shaped request to an AI provider and checks what comes back.
+
+```mermaid
+flowchart LR
+    A[You add lesson text or rough topics] --> B[Browser app helps you choose topics]
+    B --> C[You confirm the topics]
+    C --> D[Browser sends text, choices, model, and API key over HTTPS]
+    D --> E{Where is the app running?}
+    E -->|On your computer| F[Local Express backend]
+    E -->|Production| G[Vercel Function at /api/*]
+    F --> H[Backend checks the request and prepares the prompt]
+    G --> H
+    H --> I[Gemini or NVIDIA model]
+    I --> J[Backend checks the JSON, question count, and source evidence]
+    J -->|Valid| K[You review and select candidates]
+    J -->|Evidence mismatch| L[One corrective generation attempt]
+    L --> I
+    K --> M[Approve 2 MCQs, 2 true/false, and 1 code analysis question]
+    M --> N[Copy or download trainer and student versions]
+```
+
+In everyday terms:
+
+1. **You choose what to teach.** Paste lesson material or start from rough topics. The browser helps you select the topics before question generation.
+2. **The backend sends the request.** It adds instructions for the chosen question type and asks the selected provider for a fixed number of candidates in a structured format.
+3. **The backend checks the result.** It checks that the response has the right fields and number of questions, and that evidence uses words found together in your source. If evidence does not match, it asks the provider once to correct it. Unsupported results are rejected.
+4. **You make the final choices.** Review the candidates, edit or regenerate where needed, and approve the required number. The app then prepares separate trainer and student exports.
+
+The browser keeps the lesson and assessment in memory. In the local app, saved provider keys are encrypted on the Windows account. In production, a key you enter stays in browser memory and is sent over HTTPS with requests; it is not saved by the hosted app. The selected provider receives the key and the source text needed to complete each request.
+
+The local and production backends serve the same purpose through different paths:
+
+| Mode | Browser connects to | Key handling |
+| --- | --- | --- |
+| Local development | Vite frontend → local Express server | Saved keys are encrypted with Windows DPAPI |
+| Vercel production | Vite build → Vercel Function at `/api/*` | Key stays in browser memory and is sent with each provider request |
+
 ## Requirements and setup
 
 - Node.js 20.19 or newer, matching the package engine requirement.
@@ -67,7 +106,7 @@ The Node tests cover question contracts, generation, provider transport failures
 - `src/lib/`: browser HTTP behavior and PDF export implementation.
 - `tests/`: Node regression tests and Playwright browser scenarios.
 
-This remains a single-user, loopback-only application. It has no remote-user authentication, shared database, or multi-process write coordination. Keep `data/` private; do not commit it or expose the backend to a network. Saved keys are not returned to the browser. Foreign web origins and non-loopback Host headers are rejected. Internal failures return generic errors; provider response bodies are not exposed. Provider failures are not automatically retried because doing so can incur additional charges.
+The local server is intended for one user on the same computer and rejects non-loopback access. The hosted Vercel app has no user accounts or shared database; each visitor supplies their own provider key in the browser session. Keep `data/` private and do not commit it. Both modes reject cross-site browser requests. Internal failures return generic errors; provider response bodies are not exposed. Network and provider errors are not automatically retried or routed to another provider. Only a response with invalid source evidence gets one corrective generation attempt.
 
 Original source files were copied to `work/production-backup/` before this refactor; credentials were not copied. `package-lock.json` pins dependency resolution. The jsPDF upgrade to 4.2.1 resolves the advisories reported by the dependency audit during this work.
 
@@ -82,4 +121,4 @@ The model picker is restricted to the assessment choices: Gemini `gemini-3.5-fla
 
 A topic title such as `HTML Basics to Advance` is not source material. Obvious short titles now return a local coverage gap before a generation call. Paste the actual lesson explanations and examples. For generated output, the app sends a category-specific JSON example and a JSON Schema to Gemini and the recommended NVIDIA model. Source evidence, fields, and candidate counts are still validated after generation.
 
-`npm run dev` now watches backend files as well as reloading frontend changes. `npm start` remains the production startup command. Timeouts stay bounded, and requests are not silently retried or sent to a different provider.
+`npm run dev` watches backend files as well as reloading frontend changes. `npm start` remains the local production startup command. Timeouts stay bounded, and requests are not silently routed to a different provider.
