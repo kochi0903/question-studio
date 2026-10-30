@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+*.log
+work/
+test-results/
+playwright-report/
+coverage/
