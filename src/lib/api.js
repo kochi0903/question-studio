@@ -1,7 +1,14 @@
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+
+export const usesExternalApi = Boolean(API_BASE_URL);
+
 export async function api(url, options = {}) {
   let response;
   try {
-    response = await fetch(url, {
+    const requestUrl = url.startsWith("/")
+      ? `${API_BASE_URL}${url}`
+      : url;
+    response = await fetch(requestUrl, {
       ...options,
       headers: { "Content-Type": "application/json", ...options.headers },
       signal: options.signal || AbortSignal.timeout(120000),

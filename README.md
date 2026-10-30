@@ -5,7 +5,7 @@ A local assessment builder that turns source material into five reviewer-approve
 ## Requirements and setup
 
 - Node.js 20.19 or newer, matching the package engine requirement.
-- Windows for remembered provider keys, using the current account's DPAPI encryption.
+- Windows for locally remembered provider keys, using the current account's DPAPI encryption.
 - Microsoft Edge for the browser regression suite. To use another Playwright browser, adjust `channel` in `playwright.config.js`.
 
 ```powershell
@@ -23,6 +23,14 @@ npm start
 ```
 
 Open http://127.0.0.1:4174. Set `PORT` to change the backend port; also update the development proxy in `vite.config.js` if using a different backend port during development. Stop the server with Ctrl+C. Run only one backend process against a given credential directory.
+
+## Vercel production
+
+The deployment uses `vercel.json` to build the Vite app into `dist` and `api/[...path].js` to expose the Express API as a Vercel Function. `.env.production` points the browser app at `https://question-studio-lime.vercel.app`; update `VITE_API_BASE_URL` there if the production domain changes. Deploy the project root in Vercel so it includes both `api/` and `server/`.
+
+Provider keys entered in the hosted app stay in browser memory and are sent over HTTPS with model and generation requests. They are not saved to Vercel's filesystem or browser storage; refreshing the page requires entering the key again. In Settings, load models with the key, choose a model, and save preferences for that browser.
+
+`POST /api/models` is the model-discovery endpoint and requires a JSON body containing `provider` and `apiKey`. Opening `/api/models` directly in a browser sends `GET`, so the API responds with `405 Method Not Allowed` and guidance instead of a not-found page.
 
 ## Assessment workflow
 

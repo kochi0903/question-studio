@@ -29,7 +29,7 @@ import {
   validateQuestion,
   formattedCopy,
 } from "../shared/assessment.js";
-import { api } from "./lib/api.js";
+import { api, usesExternalApi } from "./lib/api.js";
 import { downloadAssessmentPdf } from "./lib/export-pdf.js";
 
 function safeText(value) {
@@ -128,10 +128,24 @@ function App() {
   useEffect(() => {
     api("/api/settings")
       .then((data) => {
-        setSettings(data);
-        setProvider(data.provider);
-        setModel(data.model);
-        setModels(data.model ? [{ id: data.model, label: data.model }] : []);
+        let preferences = {};
+        if (usesExternalApi) {
+          try {
+            const saved = JSON.parse(
+              window.localStorage.getItem("question-studio-preferences") || "{}",
+            );
+            if (["gemini", "nvidia"].includes(saved.provider))
+              preferences.provider = saved.provider;
+            if (typeof saved.model === "string") preferences.model = saved.model;
+          } catch {
+            window.localStorage.removeItem("question-studio-preferences");
+          }
+        }
+        const initial = { ...data, ...preferences };
+        setSettings(initial);
+        setProvider(initial.provider);
+        setModel(initial.model);
+        setModels(initial.model ? [{ id: initial.model, label: initial.model }] : []);
       })
       .catch((e) => setError(e.message));
   }, []);
@@ -180,6 +194,29 @@ function App() {
     setSavingSettings(true);
     setError("");
     try {
+      if (usesExternalApi) {
+        const keyForProvider = apiKey.trim() ||
+          (provider === settings.provider &&
+          (provider === "gemini" ? settings.hasGeminiKey : settings.hasNvidiaKey));
+        if (!keyForProvider)
+          throw new Error("Enter your provider API key before saving settings.");
+        const saved = {
+          ...settings,
+          provider,
+          model,
+          ...(provider === "gemini"
+            ? { hasGeminiKey: true }
+            : { hasNvidiaKey: true }),
+        };
+        window.localStorage.setItem(
+          "question-studio-preferences",
+          JSON.stringify({ provider, model }),
+        );
+        setSettings(saved);
+        setToast("Settings saved in this browser. Your API key stays in this session.");
+        setSettingsOpen(false);
+        return;
+      }
       const payload = {
         provider,
         model,
@@ -225,6 +262,7 @@ function App() {
           feedback,
           single,
           selectedTopics: configuration.selectedTopics || [],
+          ...(currentKey ? { apiKey: currentKey } : {}),
         }),
       });
       if (result.status === "gap" && single)
@@ -356,6 +394,7 @@ function App() {
           model: configuration.model,
           topicInput: topicInput.trim(),
           sourceText,
+          ...(currentKey ? { apiKey: currentKey } : {}),
         }),
       });
       setTopicSuggestions(result.topics || []);
@@ -381,6 +420,7 @@ function App() {
             .filter((topic) => chosenTopics.includes(topic.id))
             .map((topic) => topic.title),
           sourceText,
+          ...(currentKey ? { apiKey: currentKey } : {}),
         }),
       });
       setMaterialDraft(result.material || "");
@@ -727,8 +767,10 @@ function App() {
                 )}
               </button>
               <div className="safe-caption">
-                <LockKeyhole size={12} /> API keys are encrypted for your
-                Windows account.
+                <LockKeyhole size={12} />
+                {usesExternalApi
+                  ? "Your key stays in this browser tab and is sent over HTTPS for provider requests."
+                  : "API keys are encrypted for your Windows account."}
               </div>
             </div>
           </section>
@@ -1303,8 +1345,10 @@ function App() {
                 <ArrowLeft size={15} /> Start another set
               </button>
               <span>
-                <ShieldCheck size={14} /> API keys remain encrypted on this
-                device.
+                <ShieldCheck size={14} />
+                {usesExternalApi
+                  ? "Provider keys are held in this browser session."
+                  : "API keys remain encrypted on this device."}
               </span>
             </div>
           </section>
@@ -1554,8 +1598,9 @@ function App() {
               </button>
             </div>
             <p className="settings-intro">
-              Choose one provider for the full assessment. Your key stays on
-              this device.
+              {usesExternalApi
+                ? "Choose one provider for the full assessment. Your key stays in this browser session and is sent over HTTPS with provider requests."
+                : "Choose one provider for the full assessment. Your key stays on this device."}
             </p>
             <div className="provider-choice">
               <button
@@ -1574,7 +1619,9 @@ function App() {
                 <span>✳</span>
                 <b>Google Gemini</b>
                 <small>
-                  {settings.hasGeminiKey ? "Key saved" : "Connect API key"}
+                  {settings.hasGeminiKey
+                    ? usesExternalApi ? "Key ready" : "Key saved"
+                    : "Connect API key"}
                 </small>
               </button>
               <button
@@ -1593,7 +1640,9 @@ function App() {
                 <span>◈</span>
                 <b>NVIDIA NIM</b>
                 <small>
-                  {settings.hasNvidiaKey ? "Key saved" : "Connect API key"}
+                  {settings.hasNvidiaKey
+                    ? usesExternalApi ? "Key ready" : "Key saved"
+                    : "Connect API key"}
                 </small>
               </button>
             </div>
@@ -1615,14 +1664,16 @@ function App() {
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder={
                     keyAvailable
-                      ? "Saved on this device — enter a new key to replace"
+                      ? usesExternalApi
+                        ? "Key ready for this browser session"
+                        : "Saved on this device — enter a new key to replace"
                       : "Paste your API key"
                   }
                 />
                 <span className="saved-state">
                   {keyAvailable && !apiKey ? (
                     <>
-                      <ShieldCheck size={13} /> SAVED
+                      <ShieldCheck size={13} /> {usesExternalApi ? "IN SESSION" : "SAVED"}
                     </>
                   ) : (
                     "PRIVATE"

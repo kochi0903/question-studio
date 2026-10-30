@@ -45,9 +45,20 @@ export function createApp({
     });
     if (req.path.startsWith("/api/")) res.set("Cache-Control", "no-store");
     try {
-      if (!loopback(new URL(`http://${req.headers.host}`).hostname))
+      const requestUrl = new URL(`http://${req.headers.host}`);
+      const originUrl = req.headers.origin
+        ? new URL(req.headers.origin)
+        : undefined;
+      const onVercel = process.env.VERCEL === "1";
+      if (!loopback(requestUrl.hostname) && !onVercel)
         throw new AppError("Local access only.", 403);
-      if (req.headers.origin && !loopback(new URL(req.headers.origin).hostname))
+      if (
+        originUrl &&
+        !(
+          loopback(requestUrl.hostname) && loopback(originUrl.hostname)
+        ) &&
+        !(onVercel && originUrl.host.toLowerCase() === requestUrl.host.toLowerCase())
+      )
         throw new AppError("Local access only.", 403);
       if (req.headers["sec-fetch-site"] === "cross-site")
         throw new AppError("Local access only.", 403);
@@ -61,6 +72,12 @@ export function createApp({
   app.get("/api/settings", async (_req, res) =>
     res.json(store.safeSettings(await store.getCredentials())),
   );
+  app.get("/api/models", (_req, res) => {
+    res.set("Allow", "POST").status(405).json({
+      error:
+        "Model discovery requires POST with a provider and API key. Open Settings in Question Studio to load models.",
+    });
+  });
   app.use("/api", (req, _res, next) => {
     if (
       ["POST", "PUT"].includes(req.method) &&
@@ -86,6 +103,11 @@ export function createApp({
     return key;
   }
   app.put("/api/settings", async (req, res) => {
+    if (process.env.VERCEL === "1")
+      throw new AppError(
+        "Hosted settings are kept in this browser. Re-enter your provider key after refreshing the page.",
+        405,
+      );
     const provider = providerFrom(req.body);
     const model = stringField(req.body, "model", {
       required: true,
