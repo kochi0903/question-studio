@@ -234,42 +234,56 @@ export async function createCandidates(
       '{"status":"ok","items":[...]}',
       '{"status":"ok","items":[...],"missingTopics":[],"reason":""}',
     );
-  const response = cleanJson(
-    await generateText(
-      provider,
-      key,
-      model,
-      structuredPrompt + outputInstructions,
-      { responseSchema: responseSchema(type, selectedTopics) },
-    ),
-  );
-  if (response.status === "gap") {
-    if (
-      !Array.isArray(response.missingTopics) ||
-      !response.missingTopics.length ||
-      !response.missingTopics.every(
-        (topic) => typeof topic === "string" && topic.trim(),
-      ) ||
-      typeof response.reason !== "string" ||
-      !response.reason.trim()
-    )
+  const schema = responseSchema(type, selectedTopics);
+  let generationPrompt = structuredPrompt + outputInstructions;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = cleanJson(
+      await generateText(provider, key, model, generationPrompt, {
+        responseSchema: schema,
+      }),
+    );
+    if (response.status === "gap") {
+      if (
+        !Array.isArray(response.missingTopics) ||
+        !response.missingTopics.length ||
+        !response.missingTopics.every(
+          (topic) => typeof topic === "string" && topic.trim(),
+        ) ||
+        typeof response.reason !== "string" ||
+        !response.reason.trim()
+      )
+        throw new AppError(
+          "The model returned an incomplete coverage report. Try again.",
+          502,
+        );
+      return {
+        status: "gap",
+        missingTopics: response.missingTopics,
+        reason: response.reason,
+      };
+    }
+    if (response.status !== "ok")
       throw new AppError(
-        "The model returned an incomplete coverage report. Try again.",
+        "The model returned an unknown assessment status. Try again.",
         502,
       );
-    return {
-      status: "gap",
-      missingTopics: response.missingTopics,
-      reason: response.reason,
-    };
+    try {
+      return {
+        status: "ok",
+        items: validateItems(response.items, type, count, sourceText, selectedTopics),
+      };
+    } catch (error) {
+      const evidenceFailure =
+        error instanceof AppError &&
+        /^Candidate \d+: Evidence must match a passage in the source\.$/.test(
+          error.message,
+        );
+      if (!evidenceFailure || attempt > 0) throw error;
+      generationPrompt =
+        structuredPrompt +
+        "\n\nEVIDENCE VALIDATION RETRY: Your previous response included evidence that did not match the source. Regenerate the complete response. For each candidate, copy one complete, contiguous sentence from the source exactly as written, preserving every word and its order. Do not paraphrase, combine passages, or use a topic label as evidence. If the source cannot support the requested candidates, return a coverage gap.\n" +
+        outputInstructions;
+    }
   }
-  if (response.status !== "ok")
-    throw new AppError(
-      "The model returned an unknown assessment status. Try again.",
-      502,
-    );
-  return {
-    status: "ok",
-    items: validateItems(response.items, type, count, sourceText, selectedTopics),
-  };
+  throw new AppError("Could not generate source-grounded candidates. Try again.", 502);
 }

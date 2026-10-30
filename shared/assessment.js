@@ -39,16 +39,37 @@ function canonicalSourceText(value) {
     .trim();
 }
 
+function evidenceWords(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[’‘]/g, "'")
+    .match(/[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu)
+    ?.map((word) => word.toLowerCase()) || [];
+}
+
+function normalizeEvidenceWord(value) {
+  return value.normalize("NFKC").replace(/[’‘]/g, "'").toLowerCase();
+}
+
 function sourceEvidence(evidence, sourceText) {
   const canonicalSource = canonicalSourceText(sourceText);
-  const canonicalEvidence = canonicalSourceText(evidence);
-  if (!canonicalEvidence) return "";
-  const index = canonicalSource
-    .toLocaleLowerCase()
-    .indexOf(canonicalEvidence.toLocaleLowerCase());
-  return index < 0
-    ? ""
-    : canonicalSource.slice(index, index + canonicalEvidence.length);
+  const sourceMatches = [
+    ...canonicalSource.matchAll(/[\p{L}\p{N}]+(?:['’‘][\p{L}\p{N}]+)*/gu),
+  ];
+  const expected = evidenceWords(evidence);
+  if (!expected.length || expected.length > sourceMatches.length) return "";
+
+  for (let start = 0; start <= sourceMatches.length - expected.length; start++) {
+    const matches = expected.every(
+      (word, offset) =>
+        normalizeEvidenceWord(sourceMatches[start + offset][0]) === word,
+    );
+    if (!matches) continue;
+    const first = sourceMatches[start].index;
+    const last = sourceMatches[start + expected.length - 1];
+    return canonicalSource.slice(first, last.index + last[0].length);
+  }
+  return "";
 }
 
 // Used for model output and reviewer edits, so approval cannot bypass validation.
