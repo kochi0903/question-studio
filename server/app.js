@@ -105,19 +105,50 @@ export function createApp({
   });
   app.post("/api/material/suggest", async (req, res) => {
     const provider = providerFrom(req.body);
-    const model = stringField(req.body, "model", { required: true, max: 300 }).trim();
-    const topicInput = stringField(req.body, "topicInput", { required: true, max: 5000 }).trim();
-    const sourceText = stringField(req.body, "sourceText", { max: 100000 }) || "";
-    res.json(await suggestTopics({ provider, model, key: await keyFrom(req.body, provider), topicInput, sourceText }));
+    const model = stringField(req.body, "model", {
+      required: true,
+      max: 300,
+    }).trim();
+    const topicInput = stringField(req.body, "topicInput", {
+      required: true,
+      max: 5000,
+    }).trim();
+    const sourceText =
+      stringField(req.body, "sourceText", { max: 100000 }) || "";
+    res.json(
+      await suggestTopics({
+        provider,
+        model,
+        key: await keyFrom(req.body, provider),
+        topicInput,
+        sourceText,
+      }),
+    );
   });
   app.post("/api/material/draft", async (req, res) => {
     const provider = providerFrom(req.body);
-    const model = stringField(req.body, "model", { required: true, max: 300 }).trim();
-    const sourceText = stringField(req.body, "sourceText", { max: 100000 }) || "";
+    const model = stringField(req.body, "model", {
+      required: true,
+      max: 300,
+    }).trim();
+    const sourceText =
+      stringField(req.body, "sourceText", { max: 100000 }) || "";
     const topics = req.body.topics;
-    if (!Array.isArray(topics) || topics.length > 6 || !topics.every((topic) => typeof topic === "string" && topic.length <= 120))
+    if (
+      !Array.isArray(topics) ||
+      topics.length > 6 ||
+      !topics.every((topic) => typeof topic === "string" && topic.length <= 120)
+    )
       throw new AppError("Select valid topics to develop.");
-    res.json(await draftTopicMaterial({ provider, model, key: await keyFrom(req.body, provider), sourceText, topics }));
+    res.json(
+      await draftTopicMaterial({
+        provider,
+        model,
+        key: await keyFrom(req.body, provider),
+        sourceText,
+        topics,
+      }),
+    );
   });
   app.post("/api/generate", async (req, res) => {
     const body = req.body;
@@ -136,7 +167,8 @@ export function createApp({
       !Array.isArray(selectedTopics) ||
       selectedTopics.length > 20 ||
       !selectedTopics.every(
-        (topic) => typeof topic === "string" && topic.trim() && topic.length <= 120,
+        (topic) =>
+          typeof topic === "string" && topic.trim() && topic.length <= 120,
       )
     )
       throw new AppError("Choose up to 20 valid assessment topics.");
@@ -177,12 +209,10 @@ export function createApp({
     if (error instanceof AppError)
       return res.status(error.status).json({ error: error.message });
     logger.error("Question Studio request failed:", error.name);
-    res
-      .status(500)
-      .json({
-        error:
-          "The request could not be completed. Check the server and try again.",
-      });
+    res.status(500).json({
+      error:
+        "The request could not be completed. Check the server and try again.",
+    });
   });
   return app;
 }

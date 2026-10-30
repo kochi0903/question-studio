@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fail } from "./failures.js";
 
 function powershell(script, input) {
   if (process.platform !== "win32")
@@ -56,12 +57,27 @@ const decrypt = (value) =>
         value,
       );
 
+// Optional fallback so generation still works where DPAPI is unavailable
+// (non-Windows, a broken PowerShell, a profile change that invalidated the store).
+// A key saved in Settings always wins over these.
+const ENV_KEYS = {
+  gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+  nvidia: ["NVIDIA_API_KEY"],
+};
+function envKey(provider, env = process.env) {
+  for (const name of ENV_KEYS[provider] || []) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
 export function safeSettings(stored) {
   return {
     provider: stored.provider || "gemini",
     model: stored.model || "",
-    hasGeminiKey: Boolean(stored.geminiKey),
-    hasNvidiaKey: Boolean(stored.nvidiaKey),
+    hasGeminiKey: Boolean(stored.geminiKey || envKey("gemini")),
+    hasNvidiaKey: Boolean(stored.nvidiaKey || envKey("nvidia")),
   };
 }
 
@@ -72,14 +88,29 @@ export function createCredentialStore({
 }) {
   const storePath = path.join(directory, "credentials.json");
   let queue = Promise.resolve();
-  async function readStore() {
+  // Each decryption starts a PowerShell process (about a second, and it can hit
+  // its 15 s limit on a busy machine). Keys rarely change, so decrypt each saved
+  // value once per process and share an in-flight decryption between callers.
+  // The cache lives only in this process's memory and is cleared on every save.
+  const revealed = new Map();
+
+  async function readStore({ tolerant = false } = {}) {
     try {
       return JSON.parse(await readFile(storePath, "utf8"));
     } catch (error) {
       if (error.code === "ENOENT") return {};
+      if (error instanceof SyntaxError) {
+        if (tolerant) return {};
+        throw fail(
+          "The saved settings file is unreadable. Re-enter your provider key in Settings to rebuild it.",
+          409,
+          "STORE_UNREADABLE",
+        );
+      }
       throw error;
     }
   }
+
   return {
     safeSettings,
     async getCredentials() {
@@ -87,14 +118,36 @@ export function createCredentialStore({
       return readStore();
     },
     async getApiKey(stored, provider) {
-      return reveal(
-        provider === "gemini" ? stored.geminiKey : stored.nvidiaKey,
-      );
+      const cipher =
+        provider === "gemini" ? stored.geminiKey : stored.nvidiaKey;
+      if (!cipher) return envKey(provider);
+      if (!revealed.has(cipher)) {
+        const pending = Promise.resolve()
+          .then(() => reveal(cipher))
+          .catch(() => {
+            revealed.delete(cipher);
+            const fallback = envKey(provider);
+            if (fallback) return fallback;
+            throw fail(
+              "The saved key could not be unlocked on this Windows account. Re-enter the key in Settings.",
+              409,
+              "KEY_UNREADABLE",
+            );
+          });
+        revealed.set(cipher, pending);
+        if (revealed.size > 4) revealed.delete(revealed.keys().next().value);
+      }
+      return revealed.get(cipher);
     },
     saveCredentials({ geminiKey, nvidiaKey, provider, model }) {
       const operation = queue.then(async () => {
         await mkdir(directory, { recursive: true });
-        const next = { ...(await readStore()), provider, model };
+        // Saving rebuilds an unreadable file instead of getting stuck behind it.
+        const next = {
+          ...(await readStore({ tolerant: true })),
+          provider,
+          model,
+        };
         if (geminiKey !== undefined)
           next.geminiKey = geminiKey.trim()
             ? await protect(geminiKey.trim())
@@ -115,6 +168,7 @@ export function createCredentialStore({
             if (error.code !== "ENOENT") throw error;
           });
         }
+        revealed.clear();
         return safeSettings(next);
       });
       queue = operation.catch(() => {});
